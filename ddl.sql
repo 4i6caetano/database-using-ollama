@@ -296,3 +296,18 @@ CREATE TABLE session_attendee
 		REFERENCES person(person_id) ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
+CREATE TABLE event_attendee
+(
+	event_id bigint NOT NULL,
+	person_id bigint NOT NULL,
+	registration_date timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+	CONSTRAINT pk_event_attendee PRIMARY KEY (event_id, person_id),
+
+	CONSTRAINT fk_event_attendee_event FOREIGN KEY (event_id)
+		REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
+	CONSTRAINT fk_event_attendee_person FOREIGN KEY (person_id)
+		REFERENCES person(person_id) ON UPDATE CASCADE ON DELETE RESTRICT
+);
+
+
