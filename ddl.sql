@@ -1,5 +1,24 @@
 --Entities
 
+CREATE TABLE address
+(
+	address_id bigint GENERATED ALWAYS AS IDENTITY,
+	cep varchar(8) NOT NULL,
+	street text NOT NULL,
+	adress_number text NOT NULL,
+	neighborhood text NOT NULL,
+	city text NOT NULL,
+	adress_state varchar(2) NOT NULL,
+	complement text,
+	adress_type text NOT NULL,
+	adress_capacity integer,
+
+	CONSTRAINT pk_address_id PRIMARY KEY(address_id),
+	CONSTRAINT uq_cep UNIQUE(cep),
+	CONSTRAINT ck_adress_type CHECK(adress_type IN ('residential', 'event')),
+	CONSTRAINT ck_adress_capacity CHECK(adress_type = 'residential' OR adress_capacity IS NOT NULL)
+);
+
 CREATE TABLE event
 (
 	event_id bigint GENERATED ALWAYS AS IDENTITY,
@@ -9,18 +28,14 @@ CREATE TABLE event
 	event_category text NOT NULL,
 	event_capacity integer NOT NULL,
 
-	adress_id bigint NOT NULL,
+	address_id bigint NOT NULL,
 
 	CONSTRAINT pk_event_id PRIMARY KEY(event_id),
-	
 	CONSTRAINT uq_event_name_start_date UNIQUE(event_name, start_date),
-
-	CONSTRAINT fk_event_adress_id FOREIGN KEY(adress_id) 
-		REFERENCES adress(adress_id) ON UPDATE CASCADE ON DELETE RESTRICT
-
+	CONSTRAINT fk_event_address_id FOREIGN KEY(address_id) 
+		REFERENCES address(address_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 	CONSTRAINT ck_event_category CHECK(event_category IN
-	('technology' OR 'art & culture' OR 'science' OR 'business' OR 'entertainment' OR 'music')),
-
+		('technology', 'art & culture', 'science', 'business', 'entertainment', 'music')),
 	CONSTRAINT ck_event_capacity CHECK(event_capacity > 0)
 );
 
@@ -34,12 +49,10 @@ CREATE TABLE activity
 	event_id bigint NOT NULL,
 
 	CONSTRAINT pk_activity_id PRIMARY KEY(activity_id),
-	
 	CONSTRAINT fk_event_id FOREIGN KEY(event_id) 
-		REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE RESTRICT
-
+		REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 	CONSTRAINT ck_activity_category CHECK(activity_category IN
-	('technology' OR 'art & culture' OR 'science' OR 'business' OR 'entertainment' OR 'music')),
+		('technology', 'art & culture', 'science', 'business', 'entertainment', 'music'))
 );
 
 CREATE TABLE space
@@ -50,13 +63,10 @@ CREATE TABLE space
 	space_category varchar(200) NOT NULL,
 
 	CONSTRAINT pk_space_id PRIMARY KEY(space_id),
-	
 	CONSTRAINT uq_space_name UNIQUE(space_name),
-
 	CONSTRAINT ck_space_capacity CHECK(space_capacity > 0),
-
 	CONSTRAINT ck_space_category CHECK(space_category IN
-	('lecture' OR 'clasroom' OR 'auditorium' OR 'exhibition_hall' OR 'meeting_room' OR 'outdoor area' OR 'virtual_room')),
+		('lecture', 'classroom', 'auditorium', 'exhibition_hall', 'meeting_room', 'outdoor area', 'virtual_room'))
 );
 
 CREATE TABLE resource
@@ -67,30 +77,7 @@ CREATE TABLE resource
 
 	CONSTRAINT pk_resource_id PRIMARY KEY(resource_id),
 	CONSTRAINT uq_resource_name UNIQUE(resource_name),
-
 	CONSTRAINT ck_unit_cost CHECK(unit_cost > 0)
-);
-
-CREATE TABLE address
-(
-	adress_id bigint GENERATED ALWAYS AS IDENTITY,
-	cep varchar(8) NOT NULL,
-	street text NOT NULL,
-	adress_number text NOT NULL,
-	neighborhood text NOT NULL,
-	city text NOT NULL,
-	adress_state varchar(2) NOT NULL,
-	complement text,
-	adress_type text NOT NULL,
-	adress_capacity integer
-
-	CONSTRAINT pk_adress_id PRIMARY KEY(adress_id),
-
-	CONSTRAINT uq_cep UNIQUE(cep),
-
-	CONSTRAINT ck_adress_type CHECK(adress_type IN ('residential' OR 'event')),
-
-	CONSTRAINT ck_adress_capacity CHECK(adress_type IS 'residential' OR adress_capacity IS NOT NULL)
 );
 
 CREATE TABLE person
@@ -103,17 +90,14 @@ CREATE TABLE person
 	email text NOT NULL,
 	occupation text,
 
-	adress_id bigint NOT NULL,
+	address_id bigint NOT NULL,
 
 	CONSTRAINT pk_person_id PRIMARY KEY(person_id),
-	
 	CONSTRAINT uq_cpf UNIQUE(cpf), 
-
-	CONSTRAINT fk_person_adress_id FOREIGN KEY(adress_id) REFERENCES adress(adress_id)
-		ON UPDATE CASCADE ON DELETE RESTRICT,
-
+	CONSTRAINT fk_person_address_id FOREIGN KEY(address_id) 
+		REFERENCES address(address_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 	CONSTRAINT ck_gender CHECK(gender IN
-		('Male' OR 'FEMALE' OR "Non binary" OR "Prefer not to disclose"))
+		('Male', 'Female', 'Non-binary', 'Prefer not to disclose'))
 );
 
 Create TABLE legal_entity
@@ -134,17 +118,15 @@ CREATE TABLE session
 	session_id bigint GENERATED ALWAYS AS IDENTITY,
 	activity_id bigint NOT NULL,
 	space_id bigint NOT NULL,
-	session_date bigint NOT NULL,
-	start_time date NOT NULL,
+	session_date date NOT NULL,
+	start_time time NOT NULL,
 	end_time time NOT NULL,
 	requires_registration boolean NOT NULL DEFAULT false,
 	max_vacancies integer,
 
 	CONSTRAINT pk_session_id PRIMARY KEY (session_id),
-	
     CONSTRAINT ck_session_time CHECK (end_time > start_time),
     CONSTRAINT ck_session_vacancies CHECK (max_vacancies IS NULL OR max_vacancies > 0),
-	
     CONSTRAINT fk_session_activity FOREIGN KEY (activity_id)
         REFERENCES activity(activity_id) ON UPDATE CASCADE ON DELETE CASCADE,
     CONSTRAINT fk_session_space FOREIGN KEY (space_id)
@@ -158,7 +140,6 @@ CREATE TABLE organizer
     person_id bigint NOT NULL,
 	
     CONSTRAINT pk_organizer PRIMARY KEY (person_id),
-	
     CONSTRAINT fk_organizer_person FOREIGN KEY (person_id)
         REFERENCES person(person_id) ON UPDATE CASCADE ON DELETE CASCADE
 );
@@ -169,7 +150,6 @@ CREATE TABLE speaker
     mini_bio text,
 	
     CONSTRAINT pk_speaker PRIMARY KEY (person_id),
-	
     CONSTRAINT fk_speaker_person FOREIGN KEY (person_id)
         REFERENCES person(person_id) ON UPDATE CASCADE ON DELETE CASCADE
 );
@@ -180,7 +160,6 @@ CREATE TABLE staff
     role_description text,
 	
     CONSTRAINT pk_staff PRIMARY KEY (person_id),
-	
     CONSTRAINT fk_staff_person FOREIGN KEY (person_id)
         REFERENCES person(person_id) ON UPDATE CASCADE ON DELETE CASCADE
 );
@@ -191,11 +170,9 @@ CREATE TABLE attendee
     institution text,
 	
     CONSTRAINT pk_attendee PRIMARY KEY (person_id),
-	
     CONSTRAINT fk_attendee_person FOREIGN KEY (person_id)
         REFERENCES person(person_id) ON UPDATE CASCADE ON DELETE CASCADE
 );
-
 
 -- Associative tables
 
@@ -205,7 +182,6 @@ CREATE TABLE event_space
     space_id bigint NOT NULL,
 	
     CONSTRAINT pk_event_space PRIMARY KEY (event_id, space_id),
-	
     CONSTRAINT fk_event_space_event FOREIGN KEY (event_id)
         REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
     CONSTRAINT fk_event_space_space FOREIGN KEY (space_id)
@@ -219,9 +195,7 @@ CREATE TABLE space_resource
     quantity integer NOT NULL DEFAULT 1,
 	
     CONSTRAINT pk_space_resource PRIMARY KEY (space_id, resource_id),
-	
     CONSTRAINT ck_space_resource_quantity CHECK (quantity > 0),
-	
     CONSTRAINT fk_space_resource_space FOREIGN KEY (space_id)
         REFERENCES space(space_id) ON UPDATE CASCADE ON DELETE CASCADE,
     CONSTRAINT fk_space_resource_resource FOREIGN KEY (resource_id)
@@ -235,9 +209,7 @@ CREATE TABLE event_sponsor
     sponsorship_value numeric(12, 2),
 	
     CONSTRAINT pk_event_sponsor PRIMARY KEY (event_id, legal_entity_id),
-	
     CONSTRAINT ck_event_sponsor_value CHECK (sponsorship_value >= 0),
-	
     CONSTRAINT fk_event_sponsor_event FOREIGN KEY (event_id)
         REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
     CONSTRAINT fk_event_sponsor_company FOREIGN KEY (legal_entity_id)
@@ -250,24 +222,10 @@ CREATE TABLE event_organizer
     person_id bigint NOT NULL,
 	
     CONSTRAINT pk_event_organizer PRIMARY KEY (event_id, person_id),
-	
     CONSTRAINT fk_event_organizer_event FOREIGN KEY (event_id)
         REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
     CONSTRAINT fk_event_organizer_organizer FOREIGN KEY (person_id)
         REFERENCES organizer(person_id) ON UPDATE CASCADE ON DELETE RESTRICT
-);
-
-CREATE TABLE person_address
-(
-    person_id bigint NOT NULL,
-    address_id bigint NOT NULL,
-	
-    CONSTRAINT pk_person_address PRIMARY KEY (person_id, address_id),
-	
-    CONSTRAINT fk_person_address_person FOREIGN KEY (person_id)
-        REFERENCES person(person_id) ON UPDATE CASCADE ON DELETE CASCADE,
-    CONSTRAINT fk_person_address_address FOREIGN KEY (address_id)
-        REFERENCES address(address_id) ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
 CREATE TABLE session_attendee
