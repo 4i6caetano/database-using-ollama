@@ -55,6 +55,9 @@ Thumbs.db
 *.dump
 *.bak
 
-# Submission Archives (generated locally)
+# Submission Archives and Delivery Folders
 Prototipo.zip
 *.zip
+entrega/
+submission/
+

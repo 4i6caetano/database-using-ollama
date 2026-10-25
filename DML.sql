@@ -47,7 +47,7 @@ CREATE TABLE resource
 (
 	resource_id bigint GENERATED ALWAYS AS IDENTITY,
 	resource_name text NOT NULL,
-	unit_cost NUMERIC(10,2) NOT NULL,
+	unit_cost NUMERIC(10,2) NOT NULL DEFAULT 0.00,
 
 	CONSTRAINT pk_resource_id PRIMARY KEY(resource_id),
 	CONSTRAINT uq_resource_name UNIQUE(resource_name)
@@ -96,6 +96,30 @@ Create TABLE legal_entity
 
 	CONSTRAINT pk_entity_id PRIMARY KEY(entity_id),
 	CONSTRAINT uq_cnpj UNIQUE(cnpj)
+);
+
+-- Associative Entity
+
+CREATE TABLE session
+(
+	session_id bigint GENERATED ALWAYS AS IDENTITY,
+	activity_id bigint NOT NULL,
+	space_id bigint NOT NULL,
+	session_date bigint NOT NULL,
+	start_time date NOT NULL,
+	end_time time NOT NULL,
+	requires_registration boolean NOT NULL DEFAULT false,
+	max_vacancies integer,
+
+	CONSTRAINT pk_session_id PRIMARY KEY (session_id),
+	
+    CONSTRAINT ck_session_time CHECK (end_time > start_time),
+    CONSTRAINT ck_session_vacancies CHECK (max_vacancies IS NULL OR max_vacancies > 0),
+	
+    CONSTRAINT fk_session_activity FOREIGN KEY (activity_id)
+        REFERENCES activity(activity_id) ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT fk_session_space FOREIGN KEY (space_id)
+        REFERENCES space(space_id) ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
 -- Heritage
