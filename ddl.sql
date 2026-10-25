@@ -1,11 +1,13 @@
+--Entities
+
 CREATE TABLE event
 (
 	event_id bigint GENERATED ALWAYS AS IDENTITY,
 	start_date timestamp NOT NULL,
 	end_date timestamp NOT NULL,
 	event_name varchar(200) NOT NULL,
-	category text NOT NULL,
-	capacity integer NOT NULL,
+	event_category text NOT NULL,
+	event_capacity integer NOT NULL,
 
 	adress_id bigint NOT NULL,
 
@@ -13,8 +15,13 @@ CREATE TABLE event
 	
 	CONSTRAINT uq_event_name_start_date UNIQUE(event_name, start_date),
 
-	CONSTRAINT fk_event_adress_id FOREIGN KEY(adress_id) REFERENCES adress(adress_id)
-	ON UPDATE CASCADE ON DELETE RESTRICT
+	CONSTRAINT fk_event_adress_id FOREIGN KEY(adress_id) 
+		REFERENCES adress(adress_id) ON UPDATE CASCADE ON DELETE RESTRICT
+
+	CONSTRAINT ck_event_category CHECK(event_category IN
+	('technology' OR 'art & culture' OR 'science' OR 'business' OR 'entertainment' OR 'music')),
+
+	CONSTRAINT ck_event_capacity CHECK(event_capacity > 0)
 );
 
 CREATE TABLE activity
@@ -28,8 +35,11 @@ CREATE TABLE activity
 
 	CONSTRAINT pk_activity_id PRIMARY KEY(activity_id),
 	
-	CONSTRAINT fk_event_id FOREIGN KEY(event_id) REFERENCES event(event_id)
-	ON UPDATE CASCADE ON DELETE RESTRICT
+	CONSTRAINT fk_event_id FOREIGN KEY(event_id) 
+		REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE RESTRICT
+
+	CONSTRAINT ck_activity_category CHECK(activity_category IN
+	('technology' OR 'art & culture' OR 'science' OR 'business' OR 'entertainment' OR 'music')),
 );
 
 CREATE TABLE space
@@ -40,7 +50,13 @@ CREATE TABLE space
 	space_category varchar(200) NOT NULL,
 
 	CONSTRAINT pk_space_id PRIMARY KEY(space_id),
-	CONSTRAINT uq_space_name UNIQUE(space_name)
+	
+	CONSTRAINT uq_space_name UNIQUE(space_name),
+
+	CONSTRAINT ck_space_capacity CHECK(space_capacity > 0),
+
+	CONSTRAINT ck_space_category CHECK(space_category IN
+	('lecture' OR 'clasroom' OR 'auditorium' OR 'exhibition_hall' OR 'meeting_room' OR 'outdoor area' OR 'virtual_room')),
 );
 
 CREATE TABLE resource
@@ -50,7 +66,9 @@ CREATE TABLE resource
 	unit_cost NUMERIC(10,2) NOT NULL DEFAULT 0.00,
 
 	CONSTRAINT pk_resource_id PRIMARY KEY(resource_id),
-	CONSTRAINT uq_resource_name UNIQUE(resource_name)
+	CONSTRAINT uq_resource_name UNIQUE(resource_name),
+
+	CONSTRAINT ck_unit_cost CHECK(unit_cost > 0)
 );
 
 CREATE TABLE address
@@ -63,8 +81,16 @@ CREATE TABLE address
 	city text NOT NULL,
 	adress_state varchar(2) NOT NULL,
 	complement text,
+	adress_type text NOT NULL,
+	adress_capacity integer
 
 	CONSTRAINT pk_adress_id PRIMARY KEY(adress_id),
+
+	CONSTRAINT uq_cep UNIQUE(cep),
+
+	CONSTRAINT ck_adress_type CHECK(adress_type IN ('residential' OR 'event')),
+
+	CONSTRAINT ck_adress_capacity CHECK(adress_type IS 'residential' OR adress_capacity IS NOT NULL)
 );
 
 CREATE TABLE person
@@ -81,10 +107,13 @@ CREATE TABLE person
 
 	CONSTRAINT pk_person_id PRIMARY KEY(person_id),
 	
-	CONSTRAINT uq_cpf UNIQUE(cpf),
+	CONSTRAINT uq_cpf UNIQUE(cpf), 
 
 	CONSTRAINT fk_person_adress_id FOREIGN KEY(adress_id) REFERENCES adress(adress_id)
-	ON UPDATE CASCADE ON DELETE RESTRICT
+		ON UPDATE CASCADE ON DELETE RESTRICT,
+
+	CONSTRAINT ck_gender CHECK(gender IN
+		('Male' OR 'FEMALE' OR "Non binary" OR "Prefer not to disclose"))
 );
 
 Create TABLE legal_entity
