@@ -1,0 +1,44 @@
+SCC0640 - PROJETO DE BASES DE DADOS - INSTRUCOES
+
+INTEGRANTES
+- [preencher: nome e NUSP de cada integrante]
+
+REQUISITOS DE SOFTWARE
+- PostgreSQL 14 ou superior (cliente psql)
+- Python 3.11 ou superior
+- Ollama (https://ollama.com/download)
+
+1. CRIACAO DA BASE
+   createdb -U postgres eventos
+   Copie todo o conteudo da secao "3. DDL COMPLETO" do Projeto.txt (entre as
+   linhas de "=") para um arquivo, por exemplo ddl.sql, e execute:
+   psql -U postgres -d eventos -f ddl.sql
+
+2. EXECUCAO DO DML
+   psql -U postgres -d eventos -f DML.sql
+   O DML deve ser executado uma unica vez, logo apos o DDL, em banco vazio
+   (os IDs sao gerados automaticamente a partir de 1).
+
+3. MODELO DO OLLAMA
+   ollama pull qwen3:8b
+   O servidor do Ollama deve estar em execucao (aplicativo aberto ou "ollama serve").
+
+4. EXECUCAO DO PROTOTIPO
+   Edite Prototipo/config.json com os dados do seu PostgreSQL e do Ollama.
+   cd Prototipo
+   python -m pip install -r requirements.txt
+   python main.py
+   O Projeto.txt deve estar na pasta acima de Prototipo/ (o DDL e lido dele).
+   Ao iniciar, o programa mostra os parametros de conexao e permite altera-los.
+   Menu: 1 - consultas do projeto; 2 - pergunta em linguagem natural; 0 - sair.
+
+LIMITACOES
+- Nao ha lista de espera: inscricao em evento ou sessao lotada e rejeitada.
+- Cancelar a inscricao no evento nao cancela automaticamente as inscricoes da
+  pessoa nas sessoes desse evento.
+- A sessao nao verifica se o espaco escolhido esta em event_space nem se possui
+  os recursos necessarios para a atividade.
+- O prototipo executa apenas consultas de leitura (SELECT/WITH), em conexao
+  somente leitura. A qualidade do SQL gerado depende do modelo; o esquema e
+  enviado ao modelo de forma resumida (colunas, PKs e FKs) para caber na janela
+  de contexto padrao do Ollama.
