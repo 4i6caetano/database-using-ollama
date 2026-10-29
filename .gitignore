@@ -61,3 +61,11 @@ Prototipo.zip
 entrega/
 submission/
 
+
+# Arquivos de prompt e de interação com IA (não fazem parte da entrega)
+.claude/
+CLAUDE.md
+prompts/
+PROMPT*
+*prompt*.md
+*prompt*.txt
