@@ -1,0 +1,178 @@
+---
+title: Modelo Relacional - Sistema de Gestão de Eventos e Espaços
+---
+erDiagram
+    address {
+        bigint address_id PK
+        varchar cep
+        text street
+        text address_number
+        text neighborhood
+        text city
+        varchar address_state
+        text complement
+        text address_type
+        integer address_capacity
+    }
+    legal_entity {
+        bigint entity_id PK
+        varchar cnpj UK
+        text entity_name
+        text contact_email
+    }
+    person {
+        bigint person_id PK
+        varchar cpf UK
+        date birth_date
+        text person_name
+        varchar gender
+        text email
+        text occupation
+        bigint address_id FK
+    }
+    organizer {
+        bigint person_id PK, FK
+    }
+    speaker {
+        bigint person_id PK, FK
+        text mini_bio
+    }
+    staff {
+        bigint person_id PK, FK
+        text role_description
+    }
+    attendee {
+        bigint person_id PK, FK
+        text institution
+    }
+    event_series {
+        bigint series_id PK
+        varchar series_name UK
+        text description
+    }
+    event {
+        bigint event_id PK
+        bigint series_id FK
+        integer edition_number
+        date start_date
+        date end_date
+        varchar event_name
+        text event_category
+        integer event_capacity
+        bigint address_id FK
+        bigint hosting_entity_id FK
+        bigint primary_organizer_id FK
+    }
+    activity {
+        bigint activity_id PK
+        varchar activity_title
+        text description
+        text activity_category
+        bigint event_id FK
+    }
+    space {
+        bigint space_id PK
+        varchar space_name UK
+        integer space_capacity
+        varchar space_category
+    }
+    resource {
+        bigint resource_id PK
+        text resource_name UK
+        numeric unit_cost
+    }
+    session {
+        bigint session_id PK
+        bigint activity_id FK
+        bigint space_id FK
+        date session_date
+        time start_time
+        time end_time
+        interval duration "gerado"
+        boolean requires_registration
+        integer max_vacancies
+    }
+    session_history {
+        bigint history_id PK
+        bigint session_id FK
+        bigint old_space_id
+        date old_session_date
+        time old_start_time
+        time old_end_time
+        timestamptz changed_at
+    }
+    event_space {
+        bigint event_id PK, FK
+        bigint space_id PK, FK
+    }
+    space_resource {
+        bigint space_id PK, FK
+        bigint resource_id PK, FK
+        integer quantity
+    }
+    event_sponsor {
+        bigint event_id PK, FK
+        bigint legal_entity_id PK, FK
+        numeric sponsorship_value
+    }
+    event_organizer {
+        bigint event_id PK, FK
+        bigint person_id PK, FK
+    }
+    event_staff {
+        bigint event_id PK, FK
+        bigint person_id PK, FK
+    }
+    activity_speaker {
+        bigint activity_id PK, FK
+        bigint person_id PK, FK
+    }
+    event_attendee {
+        bigint event_id PK, FK
+        bigint person_id PK, FK
+        timestamptz registration_date
+        varchar registration_status
+    }
+    session_attendee {
+        bigint session_id PK, FK
+        bigint person_id PK, FK
+        timestamptz registration_date
+        varchar registration_status
+    }
+
+    %% Pessoa, endereço e especializações (1 pessoa : 0..1 de cada papel)
+    address ||--o{ person : "reside em"
+    person ||--o| organizer : "é"
+    person ||--o| speaker : "é"
+    person ||--o| staff : "é"
+    person ||--o| attendee : "é"
+
+    %% Evento, série e promotores
+    event_series ||--o{ event : "tem edição"
+    address ||--o{ event : "local de"
+    legal_entity |o--o{ event : "promove"
+    organizer |o--o{ event : "organiza (principal)"
+
+    %% Programação
+    event ||--o{ activity : "oferece"
+    activity ||--o{ session : "realizada em"
+    space ||--o{ session : "recebe"
+    session ||--o{ session_history : "tem histórico"
+
+    %% Tabelas associativas (N:M)
+    event ||--o{ event_space : ""
+    space ||--o{ event_space : ""
+    space ||--o{ space_resource : ""
+    resource ||--o{ space_resource : ""
+    event ||--o{ event_sponsor : ""
+    legal_entity ||--o{ event_sponsor : ""
+    event ||--o{ event_organizer : ""
+    organizer ||--o{ event_organizer : ""
+    event ||--o{ event_staff : ""
+    staff ||--o{ event_staff : ""
+    activity ||--o{ activity_speaker : ""
+    speaker ||--o{ activity_speaker : ""
+    event ||--o{ event_attendee : ""
+    attendee ||--o{ event_attendee : ""
+    session ||--o{ session_attendee : ""
+    attendee ||--o{ session_attendee : ""
