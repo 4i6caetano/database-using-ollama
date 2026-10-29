@@ -1,0 +1,759 @@
+============================================================
+SCC0640 - PROJETO DE BASES DE DADOS
+============================================================
+GRUPO: [preencher]
+INTEGRANTES: [preencher com nome e NUSP de cada integrante]
+LINGUAGEM UTILIZADA: Python 3.11+
+MODELO UTILIZADO NO OLLAMA: qwen3:8b
+============================================================
+1. DESCRICAO FINAL DO SISTEMA
+============================================================
+Sistema de banco de dados em PostgreSQL para gestão de eventos acadêmicos e
+profissionais e dos espaços onde ocorrem. Registra séries de eventos e suas
+edições, promotores (pessoas e organizações), patrocinadores, a programação de
+atividades e suas sessões (data, horário e espaço), os espaços com seus recursos
+e as pessoas com papéis sobrepostos (organizador, palestrante, staff e
+participante). Controla inscrições no evento e em sessões com vagas limitadas,
+com cancelamento, e preserva o histórico de alterações de sessões. Cinco
+triggers garantem a capacidade do evento, a ausência de conflito de espaço, as
+regras de inscrição e vagas das sessões, o histórico de alterações e a
+coerência da sessão com o período do evento e a capacidade do espaço. Um
+protótipo em Python, em linha de comando, executa as cinco consultas do projeto
+e converte perguntas em linguagem natural para SQL com um modelo local do
+Ollama, executando-as em modo somente leitura.
+============================================================
+2. DECISOES DE PROJETO
+============================================================
+Q1: Pessoa física e pessoa jurídica são representadas de formas diferentes (person/organizer e legal_entity); o evento tem um organizador principal (primary_organizer_id -> organizer) e/ou uma entidade promotora (hosting_entity_id -> legal_entity), com CHECK exigindo ao menos um; outras pessoas organizadoras ficam em event_organizer e outras organizações apoiam ou copromovem o evento via event_sponsor.
+Q2: person é a entidade base e organizer, speaker, staff e attendee são especializações sobrepostas (uma pessoa pode ter vários papéis ao mesmo tempo); o papel concreto depende do evento ou da atividade: event_organizer, event_staff e event_attendee ligam a pessoa ao evento, activity_speaker liga o palestrante à atividade e session_attendee liga o participante à sessão.
+Q3: activity guarda o que é oferecido no programa (título, descrição, categoria e evento) e session, entidade associativa entre activity e space, guarda cada realização concreta (data, horários, espaço, duração gerada, requires_registration e max_vacancies), de modo que uma atividade pode ter várias sessões.
+Q4: event_series guarda o que é comum às edições de uma iniciativa recorrente (nome e descrição) e event guarda o que é próprio de cada edição (edition_number único por série, datas, local, capacidade e promotores).
+Q5: A inscrição confirmada no evento (event_attendee) dá acesso às sessões com requires_registration = false; sessões com requires_registration = true exigem linha em session_attendee de pessoa confirmada no evento, com limite COALESCE(max_vacancies, space_capacity) e max_vacancies nunca acima da capacidade do espaço; só registration_status = 'confirmed' ocupa vaga (cancelar libera a vaga), tudo verificado por triggers, e não há lista de espera.
+Q6: session guarda apenas a programação atual e um trigger AFTER UPDATE grava em session_history os valores antigos de espaço, data e horários (com changed_at) sempre que algum deles muda, preservando todo o histórico de alterações da sessão.
+============================================================
+3. DDL COMPLETO
+============================================================
+-- ------------------------------------------------------------
+-- DDL - Sistema de Gestão de Eventos e Espaços (PostgreSQL)
+-- ------------------------------------------------------------
+-- Critério adotado para as ações referenciais:
+--   * ON UPDATE CASCADE em todas as FKs: se uma chave mudar, as
+--     referências acompanham (na prática as chaves são IDENTITY).
+--   * ON DELETE CASCADE para dependentes fracos: especializações de
+--     pessoa, atividades e sessões de um evento, histórico de sessão,
+--     inscrições e tabelas associativas (sem o "dono" elas não fazem
+--     sentido).
+--   * ON DELETE RESTRICT para referências a cadastros: pessoa e seus
+--     papéis, endereço, espaço, recurso, série, entidade jurídica. Um
+--     cadastro em uso não pode ser apagado.
+-- ------------------------------------------------------------
+
+
+-- ENTIDADES PRINCIPAIS
+
+-- Endereço de pessoas (residential) e de locais de evento (event).
+CREATE TABLE address
+(
+	address_id bigint GENERATED ALWAYS AS IDENTITY,
+	cep varchar(8) NOT NULL,
+	street text NOT NULL,
+	address_number text NOT NULL,
+	neighborhood text NOT NULL,
+	city text NOT NULL,
+	address_state varchar(2) NOT NULL,
+	complement text,
+	address_type text NOT NULL,
+	address_capacity integer,
+
+	CONSTRAINT pk_address_id PRIMARY KEY(address_id),
+
+	CONSTRAINT ck_cep CHECK(cep ~ '^[0-9]{8}$'),
+	CONSTRAINT ck_address_type CHECK(address_type IN ('residential', 'event')),
+	-- Endereço de evento precisa informar a capacidade do local.
+	CONSTRAINT ck_address_capacity CHECK(address_type = 'residential' OR address_capacity IS NOT NULL)
+);
+
+-- Pessoa jurídica: empresa, universidade, associação etc.
+CREATE TABLE legal_entity
+(
+	entity_id bigint GENERATED ALWAYS AS IDENTITY,
+	cnpj varchar(14) NOT NULL,
+	entity_name text NOT NULL,
+	contact_email text NOT NULL,
+
+	CONSTRAINT pk_entity_id PRIMARY KEY(entity_id),
+
+	CONSTRAINT uq_cnpj UNIQUE(cnpj),
+
+	CONSTRAINT ck_cnpj CHECK(cnpj ~ '^[0-9]{14}$'),
+	CONSTRAINT ck_entity_email CHECK(contact_email LIKE '%@%')
+);
+
+-- Pessoa física: entidade base das especializações (papéis).
+CREATE TABLE person
+(
+	person_id bigint GENERATED ALWAYS AS IDENTITY,
+	cpf varchar(11) NOT NULL,
+	birth_date date NOT NULL,
+	person_name text NOT NULL,
+	gender varchar(30) NOT NULL,
+	email text NOT NULL,
+	occupation text,
+
+	address_id bigint NOT NULL,
+
+	CONSTRAINT pk_person_id PRIMARY KEY(person_id),
+
+	CONSTRAINT uq_cpf UNIQUE(cpf),
+
+	CONSTRAINT fk_person_address_id FOREIGN KEY(address_id)
+		REFERENCES address(address_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+
+	CONSTRAINT ck_cpf CHECK(cpf ~ '^[0-9]{11}$'),
+	CONSTRAINT ck_person_email CHECK(email LIKE '%@%'),
+	CONSTRAINT ck_gender CHECK(gender IN
+		('Male', 'Female', 'Non-binary', 'Prefer not to disclose'))
+);
+
+
+-- ESPECIALIZAÇÕES DE PERSON (sobrepostas: uma pessoa pode ter vários papéis)
+-- A PK é a própria FK para person. Apagar a pessoa apaga seus papéis
+-- (CASCADE), mas as participações em eventos/atividades usam RESTRICT,
+-- então uma pessoa com histórico de participação não pode ser apagada.
+
+CREATE TABLE organizer
+(
+	person_id bigint NOT NULL,
+
+	CONSTRAINT pk_organizer PRIMARY KEY (person_id),
+
+	CONSTRAINT fk_organizer_person FOREIGN KEY (person_id)
+		REFERENCES person(person_id) ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+CREATE TABLE speaker
+(
+	person_id bigint NOT NULL,
+	mini_bio text,
+
+	CONSTRAINT pk_speaker PRIMARY KEY (person_id),
+
+	CONSTRAINT fk_speaker_person FOREIGN KEY (person_id)
+		REFERENCES person(person_id) ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+CREATE TABLE staff
+(
+	person_id bigint NOT NULL,
+	role_description text,
+
+	CONSTRAINT pk_staff PRIMARY KEY (person_id),
+
+	CONSTRAINT fk_staff_person FOREIGN KEY (person_id)
+		REFERENCES person(person_id) ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+CREATE TABLE attendee
+(
+	person_id bigint NOT NULL,
+	institution text,
+
+	CONSTRAINT pk_attendee PRIMARY KEY (person_id),
+
+	CONSTRAINT fk_attendee_person FOREIGN KEY (person_id)
+		REFERENCES person(person_id) ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+
+-- EVENTOS E PROGRAMAÇÃO
+
+-- Série: o que é comum a todas as edições de um evento recorrente.
+CREATE TABLE event_series
+(
+	series_id bigint GENERATED ALWAYS AS IDENTITY,
+	series_name varchar(200) NOT NULL,
+	description text,
+
+	CONSTRAINT pk_series_id PRIMARY KEY(series_id),
+
+	CONSTRAINT uq_series_name UNIQUE(series_name)
+);
+
+-- Evento: uma edição concreta de uma série.
+CREATE TABLE event
+(
+	event_id bigint GENERATED ALWAYS AS IDENTITY,
+	series_id bigint NOT NULL,
+	edition_number integer NOT NULL,
+	start_date date NOT NULL,
+	end_date date NOT NULL,
+	event_name varchar(200) NOT NULL,
+	event_category text NOT NULL,
+	event_capacity integer NOT NULL,
+
+	address_id bigint NOT NULL,
+	hosting_entity_id bigint,
+	primary_organizer_id bigint,
+
+	CONSTRAINT pk_event_id PRIMARY KEY(event_id),
+
+	CONSTRAINT uq_series_edition UNIQUE(series_id, edition_number),
+	CONSTRAINT uq_event_name_start_date UNIQUE(event_name, start_date),
+
+	CONSTRAINT fk_event_series_id FOREIGN KEY(series_id)
+		REFERENCES event_series(series_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+	CONSTRAINT fk_event_hosting_entity_id FOREIGN KEY(hosting_entity_id)
+		REFERENCES legal_entity(entity_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+	CONSTRAINT fk_primary_organizer_id FOREIGN KEY (primary_organizer_id)
+		REFERENCES organizer(person_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+	CONSTRAINT fk_event_address_id FOREIGN KEY(address_id)
+		REFERENCES address(address_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+
+	CONSTRAINT ck_edition_number CHECK(edition_number > 0),
+	CONSTRAINT ck_event_dates CHECK(end_date >= start_date),
+	CONSTRAINT ck_event_category CHECK(event_category IN
+		('technology', 'art & culture', 'science', 'business', 'entertainment', 'music')),
+	CONSTRAINT ck_event_capacity CHECK(event_capacity > 0),
+	-- Todo evento precisa de ao menos um promotor (pessoa e/ou organização).
+	CONSTRAINT ck_event_promoter CHECK
+		(hosting_entity_id IS NOT NULL OR primary_organizer_id IS NOT NULL)
+);
+
+-- Atividade: o que é oferecido no programa (título, descrição, tipo).
+CREATE TABLE activity
+(
+	activity_id bigint GENERATED ALWAYS AS IDENTITY,
+	activity_title varchar(200) NOT NULL,
+	description text,
+	activity_category text NOT NULL,
+
+	event_id bigint NOT NULL,
+
+	CONSTRAINT pk_activity_id PRIMARY KEY(activity_id),
+
+	CONSTRAINT fk_activity_event_id FOREIGN KEY(event_id)
+		REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
+
+	CONSTRAINT ck_activity_category CHECK(activity_category IN
+		('lecture', 'workshop', 'short_course', 'panel', 'round_table', 'presentation'))
+);
+
+-- Espaço físico ou virtual onde as sessões acontecem.
+CREATE TABLE space
+(
+	space_id bigint GENERATED ALWAYS AS IDENTITY,
+	space_name varchar(200) NOT NULL,
+	space_capacity integer NOT NULL,
+	space_category varchar(30) NOT NULL,
+
+	CONSTRAINT pk_space_id PRIMARY KEY(space_id),
+
+	CONSTRAINT uq_space_name UNIQUE(space_name),
+
+	CONSTRAINT ck_space_capacity CHECK(space_capacity > 0),
+	CONSTRAINT ck_space_category CHECK(space_category IN
+		('classroom', 'auditorium', 'laboratory', 'exhibition_hall', 'meeting_room', 'outdoor_area', 'virtual_room'))
+);
+
+-- Recurso que um espaço pode possuir (projetor, computador...).
+CREATE TABLE resource
+(
+	resource_id bigint GENERATED ALWAYS AS IDENTITY,
+	resource_name text NOT NULL,
+	unit_cost numeric(10,2) NOT NULL DEFAULT 0.00,
+
+	CONSTRAINT pk_resource_id PRIMARY KEY(resource_id),
+
+	CONSTRAINT uq_resource_name UNIQUE(resource_name),
+
+	CONSTRAINT ck_unit_cost CHECK(unit_cost >= 0)
+);
+
+
+-- ENTIDADE ASSOCIATIVA
+
+-- Sessão: realização concreta de uma atividade em um espaço, data e horário.
+-- Guarda apenas a programação ATUAL; alterações vão para session_history.
+CREATE TABLE session
+(
+	session_id bigint GENERATED ALWAYS AS IDENTITY,
+	activity_id bigint NOT NULL,
+	space_id bigint NOT NULL,
+	session_date date NOT NULL,
+	start_time time NOT NULL,
+	end_time time NOT NULL,
+	-- Atributo gerado: calculado automaticamente a partir dos horários.
+	duration interval GENERATED ALWAYS AS (end_time - start_time) STORED,
+	requires_registration boolean NOT NULL DEFAULT false,
+	-- Limite próprio da sessão; se NULL vale a capacidade do espaço.
+	max_vacancies integer,
+
+	CONSTRAINT pk_session_id PRIMARY KEY (session_id),
+
+	CONSTRAINT fk_session_activity FOREIGN KEY (activity_id)
+		REFERENCES activity(activity_id) ON UPDATE CASCADE ON DELETE CASCADE,
+	CONSTRAINT fk_session_space FOREIGN KEY (space_id)
+		REFERENCES space(space_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+
+	CONSTRAINT ck_session_time CHECK (end_time > start_time),
+	CONSTRAINT ck_session_vacancies CHECK (max_vacancies IS NULL OR max_vacancies > 0)
+);
+
+-- Histórico de alterações de sessão (preenchido por trigger).
+-- old_space_id é uma cópia do valor antigo, não uma FK: o registro
+-- histórico deve permanecer mesmo que o espaço deixe de existir.
+CREATE TABLE session_history
+(
+	history_id bigint GENERATED ALWAYS AS IDENTITY,
+	session_id bigint NOT NULL,
+	old_space_id bigint NOT NULL,
+	old_session_date date NOT NULL,
+	old_start_time time NOT NULL,
+	old_end_time time NOT NULL,
+	changed_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+	CONSTRAINT pk_session_history PRIMARY KEY (history_id),
+
+	CONSTRAINT fk_session_history_session FOREIGN KEY (session_id)
+		REFERENCES session(session_id) ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+
+-- TABELAS ASSOCIATIVAS (relacionamentos N:M)
+
+-- Espaços disponibilizados para um evento.
+CREATE TABLE event_space
+(
+	event_id bigint NOT NULL,
+	space_id bigint NOT NULL,
+
+	CONSTRAINT pk_event_space PRIMARY KEY (event_id, space_id),
+
+	CONSTRAINT fk_event_space_event FOREIGN KEY (event_id)
+		REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
+	CONSTRAINT fk_event_space_space FOREIGN KEY (space_id)
+		REFERENCES space(space_id) ON UPDATE CASCADE ON DELETE RESTRICT
+);
+
+-- Recursos disponíveis em cada espaço e a quantidade.
+CREATE TABLE space_resource
+(
+	space_id bigint NOT NULL,
+	resource_id bigint NOT NULL,
+	quantity integer NOT NULL DEFAULT 1,
+
+	CONSTRAINT pk_space_resource PRIMARY KEY (space_id, resource_id),
+
+	CONSTRAINT fk_space_resource_space FOREIGN KEY (space_id)
+		REFERENCES space(space_id) ON UPDATE CASCADE ON DELETE CASCADE,
+	CONSTRAINT fk_space_resource_resource FOREIGN KEY (resource_id)
+		REFERENCES resource(resource_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+
+	CONSTRAINT ck_space_resource_quantity CHECK (quantity > 0)
+);
+
+-- Organizações que apoiam/patrocinam um evento.
+CREATE TABLE event_sponsor
+(
+	event_id bigint NOT NULL,
+	legal_entity_id bigint NOT NULL,
+	sponsorship_value numeric(12, 2),
+
+	CONSTRAINT pk_event_sponsor PRIMARY KEY (event_id, legal_entity_id),
+
+	CONSTRAINT fk_event_sponsor_event FOREIGN KEY (event_id)
+		REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
+	CONSTRAINT fk_event_sponsor_company FOREIGN KEY (legal_entity_id)
+		REFERENCES legal_entity(entity_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+
+	CONSTRAINT ck_event_sponsor_value CHECK (sponsorship_value >= 0)
+);
+
+-- Demais pessoas que organizam o evento (além do organizador principal).
+CREATE TABLE event_organizer
+(
+	event_id bigint NOT NULL,
+	person_id bigint NOT NULL,
+
+	CONSTRAINT pk_event_organizer PRIMARY KEY (event_id, person_id),
+
+	CONSTRAINT fk_event_organizer_event FOREIGN KEY (event_id)
+		REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
+	CONSTRAINT fk_event_organizer_organizer FOREIGN KEY (person_id)
+		REFERENCES organizer(person_id) ON UPDATE CASCADE ON DELETE RESTRICT
+);
+
+-- Equipe de apoio (staff) que trabalha em cada evento.
+CREATE TABLE event_staff
+(
+	event_id bigint NOT NULL,
+	person_id bigint NOT NULL,
+
+	CONSTRAINT pk_event_staff PRIMARY KEY (event_id, person_id),
+
+	CONSTRAINT fk_event_staff_event FOREIGN KEY (event_id)
+		REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
+	CONSTRAINT fk_event_staff_staff FOREIGN KEY (person_id)
+		REFERENCES staff(person_id) ON UPDATE CASCADE ON DELETE RESTRICT
+);
+
+-- Palestrantes/instrutores de cada atividade.
+CREATE TABLE activity_speaker
+(
+	activity_id bigint NOT NULL,
+	person_id bigint NOT NULL,
+
+	CONSTRAINT pk_activity_speaker PRIMARY KEY (activity_id, person_id),
+
+	CONSTRAINT fk_activity_speaker_activity FOREIGN KEY (activity_id)
+		REFERENCES activity(activity_id) ON UPDATE CASCADE ON DELETE CASCADE,
+	CONSTRAINT fk_activity_speaker_speaker FOREIGN KEY (person_id)
+		REFERENCES speaker(person_id) ON UPDATE CASCADE ON DELETE RESTRICT
+);
+
+-- Inscrição de um participante em um evento (dá acesso à programação geral).
+CREATE TABLE event_attendee
+(
+	event_id bigint NOT NULL,
+	person_id bigint NOT NULL,
+	registration_date timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	registration_status varchar(10) NOT NULL DEFAULT 'confirmed',
+
+	CONSTRAINT pk_event_attendee PRIMARY KEY (event_id, person_id),
+
+	CONSTRAINT fk_event_attendee_event FOREIGN KEY (event_id)
+		REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
+	CONSTRAINT fk_event_attendee_attendee FOREIGN KEY (person_id)
+		REFERENCES attendee(person_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+
+	CONSTRAINT ck_event_attendee_status CHECK (registration_status IN ('confirmed', 'cancelled'))
+);
+
+-- Inscrição adicional em uma sessão que exige inscrição (vagas limitadas).
+CREATE TABLE session_attendee
+(
+	session_id bigint NOT NULL,
+	person_id bigint NOT NULL,
+	registration_date timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	registration_status varchar(10) NOT NULL DEFAULT 'confirmed',
+
+	CONSTRAINT pk_session_attendee PRIMARY KEY (session_id, person_id),
+
+	CONSTRAINT fk_session_attendee_session FOREIGN KEY (session_id)
+		REFERENCES session(session_id) ON UPDATE CASCADE ON DELETE CASCADE,
+	CONSTRAINT fk_session_attendee_attendee FOREIGN KEY (person_id)
+		REFERENCES attendee(person_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+
+	CONSTRAINT ck_session_attendee_status CHECK (registration_status IN ('confirmed', 'cancelled'))
+);
+
+
+-- ------------------------------------------------------------
+-- FUNÇÕES E TRIGGERS
+-- ------------------------------------------------------------
+
+
+-- TRIGGER 1 - Capacidade total do evento
+-- Tabela: event_attendee | Evento: INSERT ou UPDATE | Momento: BEFORE
+-- Por que BEFORE: a inscrição deve ser rejeitada antes de ser gravada.
+-- Dados examinados: event.event_capacity e as inscrições confirmadas
+-- do mesmo evento.
+-- Ação: só verifica inscrições 'confirmed'. Conta os confirmados do
+-- evento, excluindo a própria linha no UPDATE (senão ela seria contada
+-- duas vezes), e rejeita se a capacidade já foi atingida.
+CREATE OR REPLACE FUNCTION fn_event_total_capacity_constraint()
+RETURNS trigger AS $$
+DECLARE
+	v_event_capacity integer;
+	v_confirmed integer;
+BEGIN
+	-- Inscrição cancelada não ocupa vaga.
+	IF NEW.registration_status <> 'confirmed' THEN
+		RETURN NEW;
+	END IF;
+
+	SELECT event_capacity INTO v_event_capacity
+	FROM event
+	WHERE event_id = NEW.event_id;
+
+	SELECT count(*) INTO v_confirmed
+	FROM event_attendee
+	WHERE event_id = NEW.event_id
+		AND registration_status = 'confirmed'
+		-- No UPDATE, a linha antiga não entra na contagem.
+		AND NOT (TG_OP = 'UPDATE'
+			AND event_id = OLD.event_id
+			AND person_id = OLD.person_id);
+
+	IF v_confirmed >= v_event_capacity THEN
+		RAISE EXCEPTION 'Evento lotado: capacidade de % inscritos atingida.', v_event_capacity;
+	END IF;
+
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tg_event_total_capacity_constraint
+BEFORE INSERT OR UPDATE ON event_attendee
+FOR EACH ROW
+EXECUTE FUNCTION fn_event_total_capacity_constraint();
+
+
+-- TRIGGER 2 - Conflito de espaço entre sessões
+-- Tabela: session | Evento: INSERT ou UPDATE de espaço, data ou horário
+-- Momento: BEFORE, para impedir que a sessão conflitante seja gravada.
+-- Dados examinados: outras sessões no mesmo espaço e na mesma data.
+-- Ação: rejeita se os intervalos de horário se sobrepõem (OVERLAPS).
+-- Intervalos apenas encostados (ex.: 9h-12h e 12h-14h) não conflitam.
+CREATE OR REPLACE FUNCTION fn_same_instant_sessions_constraint()
+RETURNS trigger AS $$
+BEGIN
+	PERFORM 1
+	FROM session
+	WHERE space_id = NEW.space_id
+		AND session_date = NEW.session_date
+		AND (NEW.start_time, NEW.end_time) OVERLAPS (start_time, end_time)
+		-- Ignora a própria sessão (caso de UPDATE).
+		AND session_id <> NEW.session_id;
+
+	IF FOUND THEN
+		RAISE EXCEPTION 'Conflito de espaço: já existe sessão neste espaço, data e horário.';
+	END IF;
+
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tg_same_instant_sessions_constraint
+BEFORE INSERT OR UPDATE OF space_id, session_date, start_time, end_time ON session
+FOR EACH ROW
+EXECUTE FUNCTION fn_same_instant_sessions_constraint();
+
+
+-- TRIGGER 3 - Inscrição em sessão e controle de vagas
+-- Tabela: session_attendee | Evento: INSERT ou UPDATE | Momento: BEFORE
+-- Por que BEFORE: a inscrição inválida não pode chegar a ser gravada.
+-- Dados examinados: session (exige inscrição? limite próprio), space
+-- (capacidade), activity (evento da sessão), event_attendee (pessoa
+-- confirmada no evento) e as inscrições confirmadas da sessão.
+-- Ação: rejeita se a sessão não exige inscrição; para inscrição
+-- confirmada, rejeita se a pessoa não está confirmada no evento ou se
+-- o limite COALESCE(max_vacancies, space_capacity) foi atingido.
+CREATE OR REPLACE FUNCTION fn_session_registration_constraint()
+RETURNS trigger AS $$
+DECLARE
+	v_requires_registration boolean;
+	v_event_id bigint;
+	v_limit integer;
+	v_confirmed integer;
+BEGIN
+	SELECT s.requires_registration,
+		a.event_id,
+		COALESCE(s.max_vacancies, sp.space_capacity)
+	INTO v_requires_registration, v_event_id, v_limit
+	FROM session s
+	JOIN activity a ON a.activity_id = s.activity_id
+	JOIN space sp ON sp.space_id = s.space_id
+	WHERE s.session_id = NEW.session_id;
+
+	IF NOT v_requires_registration THEN
+		RAISE EXCEPTION 'Esta sessão não exige inscrição: basta a inscrição no evento.';
+	END IF;
+
+	-- Cancelamento não ocupa vaga e não precisa das demais verificações.
+	IF NEW.registration_status <> 'confirmed' THEN
+		RETURN NEW;
+	END IF;
+
+	IF NOT EXISTS (
+		SELECT 1
+		FROM event_attendee
+		WHERE event_id = v_event_id
+			AND person_id = NEW.person_id
+			AND registration_status = 'confirmed'
+	) THEN
+		RAISE EXCEPTION 'A pessoa precisa estar confirmada no evento para se inscrever na sessão.';
+	END IF;
+
+	SELECT count(*) INTO v_confirmed
+	FROM session_attendee
+	WHERE session_id = NEW.session_id
+		AND registration_status = 'confirmed'
+		-- No UPDATE, a linha antiga não entra na contagem.
+		AND NOT (TG_OP = 'UPDATE'
+			AND session_id = OLD.session_id
+			AND person_id = OLD.person_id);
+
+	IF v_confirmed >= v_limit THEN
+		RAISE EXCEPTION 'Sessão lotada: limite de % vagas atingido.', v_limit;
+	END IF;
+
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tg_session_registration_constraint
+BEFORE INSERT OR UPDATE ON session_attendee
+FOR EACH ROW
+EXECUTE FUNCTION fn_session_registration_constraint();
+
+
+-- TRIGGER 4 - Histórico de alterações de sessão
+-- Tabela: session | Evento: UPDATE | Momento: AFTER
+-- Por que AFTER: só registra a mudança depois que ela passou por todas
+-- as validações (triggers BEFORE e constraints) e foi de fato aplicada.
+-- Dados examinados: valores OLD e NEW de espaço, data e horários.
+-- Ação: grava os valores antigos em session_history. A cláusula WHEN
+-- faz o trigger disparar só quando algum desses campos mudou de fato
+-- (IS DISTINCT FROM também trata NULL corretamente).
+CREATE OR REPLACE FUNCTION fn_session_history_log()
+RETURNS trigger AS $$
+BEGIN
+	INSERT INTO session_history
+		(session_id, old_space_id, old_session_date, old_start_time, old_end_time)
+	VALUES
+		(OLD.session_id, OLD.space_id, OLD.session_date, OLD.start_time, OLD.end_time);
+
+	RETURN NULL; -- em trigger AFTER o valor de retorno é ignorado
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tg_session_history_log
+AFTER UPDATE ON session
+FOR EACH ROW
+WHEN (OLD.space_id IS DISTINCT FROM NEW.space_id
+	OR OLD.session_date IS DISTINCT FROM NEW.session_date
+	OR OLD.start_time IS DISTINCT FROM NEW.start_time
+	OR OLD.end_time IS DISTINCT FROM NEW.end_time)
+EXECUTE FUNCTION fn_session_history_log();
+
+
+-- TRIGGER 5 - Coerência da sessão com o evento e o espaço
+-- Tabela: session | Evento: INSERT ou UPDATE | Momento: BEFORE
+-- Por que BEFORE: impede gravar uma sessão incoerente.
+-- Dados examinados: período do evento (via activity) e capacidade do
+-- espaço escolhido.
+-- Ação: rejeita se session_date está fora do período do evento ou se
+-- max_vacancies é maior que a capacidade do espaço.
+CREATE OR REPLACE FUNCTION fn_session_consistency_constraint()
+RETURNS trigger AS $$
+DECLARE
+	v_start_date date;
+	v_end_date date;
+	v_space_capacity integer;
+BEGIN
+	SELECT e.start_date, e.end_date INTO v_start_date, v_end_date
+	FROM activity a
+	JOIN event e ON e.event_id = a.event_id
+	WHERE a.activity_id = NEW.activity_id;
+
+	IF NEW.session_date NOT BETWEEN v_start_date AND v_end_date THEN
+		RAISE EXCEPTION 'Data da sessão (%) fora do período do evento (% a %).',
+			NEW.session_date, v_start_date, v_end_date;
+	END IF;
+
+	SELECT space_capacity INTO v_space_capacity
+	FROM space
+	WHERE space_id = NEW.space_id;
+
+	IF NEW.max_vacancies > v_space_capacity THEN
+		RAISE EXCEPTION 'Vagas da sessão (%) excedem a capacidade do espaço (%).',
+			NEW.max_vacancies, v_space_capacity;
+	END IF;
+
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tg_session_consistency_constraint
+BEFORE INSERT OR UPDATE ON session
+FOR EACH ROW
+EXECUTE FUNCTION fn_session_consistency_constraint();
+============================================================
+4. CONSULTAS
+============================================================
+CONSULTA 1
+OBJETIVO: Listar a programação da Semana da Computação 2026 (atividade, tipo, data, horário e espaço de cada sessão) em ordem cronológica.
+SQL: SELECT a.activity_title, a.activity_category, s.session_date, s.start_time, s.end_time, sp.space_name, s.requires_registration
+FROM event e
+JOIN activity a ON a.event_id = e.event_id
+JOIN session s ON s.activity_id = a.activity_id
+JOIN space sp ON sp.space_id = s.space_id
+WHERE e.event_name = 'Semana da Computação 2026'
+ORDER BY s.session_date, s.start_time;
+
+CONSULTA 2
+OBJETIVO: Mostrar as sessões com inscrição que já preencheram pelo menos metade das vagas, com confirmados, limite efetivo e vagas restantes.
+SQL: SELECT e.event_name, a.activity_title, s.session_id, s.session_date,
+       COUNT(sa.person_id) AS confirmados,
+       COALESCE(s.max_vacancies, sp.space_capacity) AS limite,
+       COALESCE(s.max_vacancies, sp.space_capacity) - COUNT(sa.person_id) AS vagas_restantes
+FROM session s
+JOIN activity a ON a.activity_id = s.activity_id
+JOIN event e ON e.event_id = a.event_id
+JOIN space sp ON sp.space_id = s.space_id
+JOIN session_attendee sa ON sa.session_id = s.session_id
+WHERE s.requires_registration = true
+  AND sa.registration_status = 'confirmed'
+GROUP BY e.event_name, a.activity_title, s.session_id, s.session_date, s.max_vacancies, sp.space_capacity
+HAVING COUNT(sa.person_id) >= 0.5 * COALESCE(s.max_vacancies, sp.space_capacity)
+ORDER BY vagas_restantes, s.session_id;
+
+CONSULTA 3
+OBJETIVO: Listar os participantes confirmados no evento 3 (Semana da Computação 2026) que estão confirmados em todas as sessões com inscrição desse evento.
+SQL: SELECT p.person_id, p.person_name
+FROM person p
+JOIN event_attendee ea ON ea.person_id = p.person_id
+WHERE ea.event_id = 3
+  AND ea.registration_status = 'confirmed'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM session s
+      JOIN activity a ON a.activity_id = s.activity_id
+      WHERE a.event_id = 3
+        AND s.requires_registration = true
+        AND NOT EXISTS (
+            SELECT 1
+            FROM session_attendee sa
+            WHERE sa.session_id = s.session_id
+              AND sa.person_id = p.person_id
+              AND sa.registration_status = 'confirmed'
+        )
+  )
+ORDER BY p.person_name;
+
+CONSULTA 4
+OBJETIVO: Comparar o número de inscritos confirmados entre as edições de cada série, com ranking dentro da série e diferença em relação à edição anterior.
+SQL: WITH inscritos_por_edicao AS (
+    SELECT es.series_name, e.edition_number, e.event_name,
+           COUNT(ea.person_id) AS inscritos
+    FROM event_series es
+    JOIN event e ON e.series_id = es.series_id
+    LEFT JOIN event_attendee ea ON ea.event_id = e.event_id
+                               AND ea.registration_status = 'confirmed'
+    GROUP BY es.series_name, e.edition_number, e.event_name
+)
+SELECT series_name, edition_number, event_name, inscritos,
+       RANK() OVER (PARTITION BY series_name ORDER BY inscritos DESC) AS ranking_na_serie,
+       inscritos - LAG(inscritos) OVER (PARTITION BY series_name ORDER BY edition_number) AS diferenca_edicao_anterior
+FROM inscritos_por_edicao
+ORDER BY series_name, edition_number;
+
+CONSULTA 5
+OBJETIVO: Listar todos os espaços com a quantidade de sessões e o custo total dos recursos instalados, incluindo espaços sem nenhuma sessão.
+SQL: SELECT sp.space_name, sp.space_category, sp.space_capacity,
+       COUNT(s.session_id) AS total_sessoes,
+       COALESCE(custos.custo_recursos, 0) AS custo_recursos
+FROM space sp
+LEFT JOIN session s ON s.space_id = sp.space_id
+LEFT JOIN (
+    SELECT sr.space_id, SUM(sr.quantity * r.unit_cost) AS custo_recursos
+    FROM space_resource sr
+    JOIN resource r ON r.resource_id = sr.resource_id
+    GROUP BY sr.space_id
+) custos ON custos.space_id = sp.space_id
+GROUP BY sp.space_id, sp.space_name, sp.space_category, sp.space_capacity, custos.custo_recursos
+ORDER BY total_sessoes DESC, sp.space_name;
+============================================================
+FIM DO ARQUIVO
+============================================================
