@@ -2,7 +2,7 @@
 SCC0640 - PROJETO DE BASES DE DADOS
 ============================================================
 GRUPO: 
-INTEGRANTES: Rafael Mendonça Duarte (NUSP: 16817608), Mateus Cardoso Vargas Saracuza (NUSP: 13674087), João Pedro (NUSP: XXXXXXX), Nicolas (NUSP: XXXXXXX), Pedro dos Santos Kemp (NUSP: 17064431)
+INTEGRANTES: Rafael Mendonça Duarte (NUSP: 16817608), Mateus Cardoso Vargas Saracuza (NUSP: 13674087), João Pedro (NUSP: XXXXXXX), Nícolas Silva Scorza (NUSP: 17025079), Pedro dos Santos Kemp (NUSP: 17064431)
 LINGUAGEM UTILIZADA: Python 3.11+
 MODELO UTILIZADO NO OLLAMA: qwen3:8b
 ============================================================
