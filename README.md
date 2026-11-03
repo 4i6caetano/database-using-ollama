@@ -23,6 +23,13 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
+## Made by:
+
+- Joao Pedro
+- Mateus Saracuza
+- Rafael Duarte
+- Nicolas
+- Pedro Kemp
 ## References
 
 - [PostgreSQL documentation](https://www.postgresql.org/docs/)
