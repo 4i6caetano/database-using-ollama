@@ -30,6 +30,7 @@ python main.py
 - Rafael Duarte
 - Nicolas
 - Pedro Kemp
+  
 ## References
 
 - [PostgreSQL documentation](https://www.postgresql.org/docs/)

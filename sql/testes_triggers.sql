@@ -1,5 +1,5 @@
 -- ------------------------------------------------------------
--- TESTES DOS TRIGGERS (estudo e demonstração; NÃO faz parte da entrega)
+-- TESTES DOS TRIGGERS
 -- Executar depois do DDL e do DML.sql, por exemplo:
 --   psql -d eventos -f sql/testes_triggers.sql
 --

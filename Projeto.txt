@@ -1,9 +1,8 @@
 ============================================================
 SCC0640 - PROJETO DE BASES DE DADOS
 ============================================================
-GRUPO: 
+GRUPO: Saracuzers
 INTEGRANTES: Rafael Mendonça Duarte (NUSP: 16817608), Mateus Cardoso Vargas Saracuza (NUSP: 13674087), João Pedro (NUSP: 16987067), Nícolas Silva Scorza (NUSP: 17025079), Pedro dos Santos Kemp (NUSP: 17064431)
-LINGUAGEM UTILIZADA: Python 3.11+
 MODELO UTILIZADO NO OLLAMA: qwen3:8b
 ============================================================
 1. DESCRICAO FINAL DO SISTEMA
@@ -20,7 +19,7 @@ regras de inscrição e vagas das sessões, o histórico de alterações e a
 coerência da sessão com o período do evento e a capacidade do espaço. Um
 protótipo em Python, em linha de comando, executa as cinco consultas do projeto
 e converte perguntas em linguagem natural para SQL com um modelo local do
-Ollama, executando-as em modo somente leitura.
+Ollama, executando-as em modo somente leitura. Feito com Python 3.11+
 ============================================================
 2. DECISOES DE PROJETO
 ============================================================
